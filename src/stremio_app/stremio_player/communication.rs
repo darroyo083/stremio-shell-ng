@@ -182,6 +182,7 @@ pub enum IntProp {
     Aid,
     Vid,
     Sid,
+    SecondarySid,
 }
 stringable!(IntProp);
 // Fp
@@ -194,6 +195,7 @@ pub enum FpProp {
     Volume,
     Duration,
     SubDelay,
+    SecondarySubDelay,
     SubScale,
     CacheBufferingState,
     DemuxerCacheTime,
@@ -260,6 +262,7 @@ pub enum PropVal {
 #[serde(untagged)]
 pub enum MpvCmd {
     Loadfile,
+    SubAdd,
     Stop,
 }
 stringable!(MpvCmd);

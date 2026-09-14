@@ -27,6 +27,29 @@ const APPCOMMAND_MEDIA_PLAY: u32 = 46;
 const APPCOMMAND_MEDIA_PAUSE: u32 = 47;
 const VK_F: u32 = b'F' as u32;
 
+const SHELL_BOOTSTRAP_SCRIPT: &str = r##"
+window.addEventListener('contextmenu', event => {
+    if (event.shiftKey) event.stopImmediatePropagation();
+}, true);
+window.addEventListener('mouseup', event => {
+    if (event.shiftKey && event.button === 2) {
+        event.stopImmediatePropagation();
+    }
+}, true);
+try {
+    console.log('Shell JS injected');
+    if (window.self === window.top) {
+        window.qt = { webChannelTransport: { send: window.chrome.webview.postMessage } };
+        window.chrome.webview.addEventListener('message', ev => window.qt.webChannelTransport.onmessage(ev));
+    }
+} catch (e) {}
+window.addEventListener('load', function() {
+    if (typeof window.initShellComm === 'function') {
+        try { window.initShellComm(); } catch (e) {}
+    }
+}, false);
+"##;
+
 #[derive(Default)]
 pub struct WebView {
     pub endpoint: Rc<OnceCell<String>>,
@@ -169,22 +192,8 @@ impl PartialUi for WebView {
                             ).as_str(), |_| Ok(())
                             ).expect("Cannot add SERVER_IPC_KEY to webview");
 
-                            wv.execute_script(r##"
-                            window.addEventListener('contextmenu', event => {
-                                if (event.shiftKey) event.stopImmediatePropagation();
-                            }, true);
-                            window.addEventListener('mouseup', event => {
-                                if (event.shiftKey && event.button === 2) {
-                                    event.stopImmediatePropagation();
-                                }
-                            }, true);
-                            try{console.log('Shell JS injected');if(window.self === window.top) {
-                                window.qt={webChannelTransport:{send:window.chrome.webview.postMessage}};
-                                window.chrome.webview.addEventListener('message',ev=>window.qt.webChannelTransport.onmessage(ev));
-                                }}catch(e){}
-                            window.addEventListener("load", function() {if(initShellComm) try { initShellComm() } catch(e) {}}, false)
-
-                            "##, |_| Ok(())).expect("Cannot add script to webview");
+                            wv.execute_script(SHELL_BOOTSTRAP_SCRIPT, |_| Ok(()))
+                                .expect("Cannot add script to webview");
                             Ok(())
                         }).expect("Cannot add content loading");
 
@@ -302,5 +311,22 @@ impl PartialUi for WebView {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SHELL_BOOTSTRAP_SCRIPT;
+
+    #[test]
+    fn legacy_init_guard_is_safe_when_init_shell_comm_is_missing() {
+        assert!(SHELL_BOOTSTRAP_SCRIPT.contains("typeof window.initShellComm === 'function'"));
+        assert!(!SHELL_BOOTSTRAP_SCRIPT.contains("if(initShellComm)"));
+    }
+
+    #[test]
+    fn modern_webview_transport_bootstrap_is_preserved() {
+        assert!(SHELL_BOOTSTRAP_SCRIPT.contains("window.chrome.webview.postMessage"));
+        assert!(SHELL_BOOTSTRAP_SCRIPT.contains("window.chrome.webview.addEventListener('message'"));
     }
 }

@@ -561,6 +561,18 @@ fn create_event_thread(
     })
 }
 
+fn checked_mpv_int(value: f64) -> Option<i64> {
+    if value.is_finite()
+        && value.fract() == 0.0
+        && value >= i64::MIN as f64
+        && value < -(i64::MIN as f64)
+    {
+        Some(value as i64)
+    } else {
+        None
+    }
+}
+
 fn create_message_thread(
     mpv: Arc<Mpv>,
     window_handle: isize,
@@ -590,15 +602,35 @@ fn create_message_thread(
                     send_video_ready(&rpc_response_sender, load_id, false);
                 }
                 let args = args.iter().map(String::as_str).collect::<Vec<_>>();
-                if let Err(error) = mpv.command(name, &args) {
-                    eprintln!("failed to execute MPV command: '{error:#}'")
+                let subtitle_diagnostic = name == "sub-add";
+                if subtitle_diagnostic {
+                    eprintln!("[TwinCue native-subtitles] shell -> mpv command: {name} {args:?}");
+                }
+                match mpv.command(name, &args) {
+                    Ok(()) => {
+                        if subtitle_diagnostic {
+                            eprintln!("[TwinCue native-subtitles] mpv command result: success");
+                        }
+                    }
+                    Err(error) => {
+                        if subtitle_diagnostic {
+                            eprintln!(
+                                "[TwinCue native-subtitles] mpv command result: error {error:#}"
+                            );
+                        } else {
+                            eprintln!("failed to execute MPV command: '{error:#}'");
+                        }
+                    }
                 }
             }
         };
 
-        fn set_property(name: impl ToString, value: impl SetData, mpv: &Mpv) {
+        fn set_property(name: impl ToString, value: impl SetData, mpv: &Mpv) -> bool {
             if let Err(error) = mpv.set_property(&name.to_string(), value) {
-                eprintln!("cannot set MPV property: '{error:#}'")
+                eprintln!("cannot set MPV property: '{error:#}'");
+                false
+            } else {
+                true
             }
         }
 
@@ -629,17 +661,48 @@ fn create_message_thread(
                 InMsg(InMsgFn::MpvSetProp, InMsgArgs::StProp(name, PropVal::Bool(value))) => {
                     set_property(name, value, &mpv);
                 }
+                InMsg(
+                    InMsgFn::MpvSetProp,
+                    InMsgArgs::StProp(PropKey::Int(name), PropVal::Num(value)),
+                ) => {
+                    let property_name = name.to_string();
+                    if let Some(value) = checked_mpv_int(value) {
+                        let subtitle_diagnostic =
+                            property_name == "sid" || property_name == "secondary-sid";
+                        if subtitle_diagnostic {
+                            eprintln!("[TwinCue native-subtitles] shell -> mpv property: {property_name}={value} (int64)");
+                        }
+                        let success = set_property(name, value, &mpv);
+                        if subtitle_diagnostic {
+                            eprintln!("[TwinCue native-subtitles] mpv property result: {property_name} {}", if success { "success" } else { "error" });
+                        }
+                    } else {
+                        eprintln!("cannot set MPV integer property '{property_name}' from non-integer value {value}");
+                    }
+                }
                 InMsg(InMsgFn::MpvSetProp, InMsgArgs::StProp(name, PropVal::Num(value))) => {
                     set_property(name, value, &mpv);
                 }
                 InMsg(InMsgFn::MpvSetProp, InMsgArgs::StProp(name, PropVal::Str(value))) => {
-                    let is_vo = name.to_string() == "vo";
+                    let property_name = name.to_string();
+                    let is_vo = property_name == "vo";
+                    let subtitle_diagnostic =
+                        property_name == "sid" || property_name == "secondary-sid";
                     let value = if is_vo {
                         with_gpu_next_fallback(value)
                     } else {
                         value
                     };
-                    set_property(name, value, &mpv);
+                    if subtitle_diagnostic {
+                        eprintln!("[TwinCue native-subtitles] shell -> mpv property: {property_name}={value:?} (string)");
+                    }
+                    let success = set_property(name, value, &mpv);
+                    if subtitle_diagnostic {
+                        eprintln!(
+                            "[TwinCue native-subtitles] mpv property result: {property_name} {}",
+                            if success { "success" } else { "error" }
+                        );
+                    }
                     // vo reinit reverts color props to defaults; re-assert for the current display.
                     if is_vo {
                         apply_display_output_mode(
@@ -670,7 +733,21 @@ fn create_message_thread(
 
 #[cfg(test)]
 mod tests {
-    use super::VideoReadyState;
+    use super::{checked_mpv_int, VideoReadyState};
+
+    #[test]
+    fn integer_mpv_properties_use_exact_int64_values() {
+        assert_eq!(checked_mpv_int(7.0), Some(7));
+        assert_eq!(checked_mpv_int(-1.0), Some(-1));
+        assert_eq!(checked_mpv_int(7.5), None);
+        assert_eq!(checked_mpv_int(i64::MIN as f64), Some(i64::MIN));
+        assert_eq!(
+            checked_mpv_int(9_223_372_036_854_774_784.0),
+            Some(9_223_372_036_854_774_784),
+        );
+        assert_eq!(checked_mpv_int(9_223_372_036_854_775_808.0), None);
+        assert_eq!(checked_mpv_int(f64::NAN), None);
+    }
 
     #[test]
     fn ready_follows_file_loaded_restart_once() {
