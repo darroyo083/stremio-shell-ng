@@ -1,6 +1,6 @@
 use crate::stremio_app::stremio_player::communication::{
-    BoolProp, CmdVal, InMsg, InMsgArgs, InMsgFn, MpvCmd, PlayerEnded, PlayerProprChange,
-    PlayerResponse, PropKey, PropVal,
+    BoolProp, CmdVal, FpProp, InMsg, InMsgArgs, InMsgFn, IntProp, MpvCmd, PlayerEnded,
+    PlayerProprChange, PlayerResponse, PropKey, PropVal,
 };
 use libmpv2::{events::PropertyData, mpv_end_file_reason};
 
@@ -177,6 +177,83 @@ fn set_propr_tokens() {
 }
 
 #[test]
+fn set_secondary_sid_tokens() {
+    assert_tokens(
+        &InMsg(
+            InMsgFn::MpvSetProp,
+            InMsgArgs::StProp(PropKey::Int(IntProp::SecondarySid), PropVal::Num(7.0)),
+        ),
+        &[
+            Token::TupleStruct {
+                name: "InMsg",
+                len: 2,
+            },
+            Token::Str("mpv-set-prop"),
+            Token::Tuple { len: 2 },
+            Token::Str("secondary-sid"),
+            Token::F64(7.0),
+            Token::TupleEnd,
+            Token::TupleStructEnd,
+        ],
+    );
+
+    let parsed: InMsg = serde_json::from_str(r#"["mpv-set-prop",["secondary-sid","no"]]"#)
+        .expect("secondary-sid should deserialize from web UI IPC");
+    assert_eq!(
+        parsed,
+        InMsg(
+            InMsgFn::MpvSetProp,
+            InMsgArgs::StProp(
+                PropKey::Int(IntProp::SecondarySid),
+                PropVal::Str("no".to_string()),
+            ),
+        )
+    );
+}
+
+#[test]
+fn set_secondary_sub_delay_tokens() {
+    assert_tokens(
+        &InMsg(
+            InMsgFn::MpvSetProp,
+            InMsgArgs::StProp(PropKey::Fp(FpProp::SecondarySubDelay), PropVal::Num(-5.0)),
+        ),
+        &[
+            Token::TupleStruct {
+                name: "InMsg",
+                len: 2,
+            },
+            Token::Str("mpv-set-prop"),
+            Token::Tuple { len: 2 },
+            Token::Str("secondary-sub-delay"),
+            Token::F64(-5.0),
+            Token::TupleEnd,
+            Token::TupleStructEnd,
+        ],
+    );
+
+    let parsed: InMsg = serde_json::from_str(r#"["mpv-set-prop",["secondary-sub-delay",-4.5]]"#)
+        .expect("secondary-sub-delay should deserialize from web UI IPC");
+    assert_eq!(
+        parsed,
+        InMsg(
+            InMsgFn::MpvSetProp,
+            InMsgArgs::StProp(PropKey::Fp(FpProp::SecondarySubDelay), PropVal::Num(-4.5),),
+        )
+    );
+
+    let observed: InMsg = serde_json::from_str(r#"["mpv-observe-prop","secondary-sub-delay"]"#)
+        .expect("secondary-sub-delay should deserialize for observation");
+    assert_eq!(
+        observed,
+        InMsg(
+            InMsgFn::MpvObserveProp,
+            InMsgArgs::ObProp(PropKey::Fp(FpProp::SecondarySubDelay)),
+        )
+    );
+}
+
+#[test]
 fn set_gpu_video_processing_tokens() {
     assert_tokens(
         &InMsg(InMsgFn::MpvSetGpuVideoProcessing, InMsgArgs::Flag(true)),
@@ -211,6 +288,45 @@ fn command_stop_tokens() {
             Token::TupleStructEnd,
         ],
     );
+}
+
+#[test]
+fn command_sub_add_tokens() {
+    let command = InMsg(
+        InMsgFn::MpvCommand,
+        InMsgArgs::Cmd(CmdVal::Quintuple(
+            MpvCmd::SubAdd,
+            "https://example.com/subtitles.srt".to_string(),
+            "auto".to_string(),
+            "TwinCue secondary".to_string(),
+            "eng".to_string(),
+        )),
+    );
+
+    assert_tokens(
+        &command,
+        &[
+            Token::TupleStruct {
+                name: "InMsg",
+                len: 2,
+            },
+            Token::Str("mpv-command"),
+            Token::Tuple { len: 5 },
+            Token::Str("sub-add"),
+            Token::Str("https://example.com/subtitles.srt"),
+            Token::Str("auto"),
+            Token::Str("TwinCue secondary"),
+            Token::Str("eng"),
+            Token::TupleEnd,
+            Token::TupleStructEnd,
+        ],
+    );
+
+    let parsed: InMsg = serde_json::from_str(
+        r#"["mpv-command",["sub-add","https://example.com/subtitles.srt","auto","TwinCue secondary","eng"]]"#,
+    )
+    .expect("sub-add should deserialize from web UI IPC");
+    assert_eq!(parsed, command);
 }
 
 #[test]
